@@ -11,6 +11,9 @@ import pandas as pd
 
 MONTH_STARTS_2073 = {
     "baisakh": "2016-04-13",
+    "jestha": "2016-05-14",
+    "ashadh": "2016-06-15",
+    "shrawan": "2016-07-16",
     "bhadra": "2016-08-17",
     "ashoj": "2016-09-17",
     "kartik": "2016-10-17",
@@ -23,6 +26,9 @@ MONTH_STARTS_2073 = {
 
 MONTH_DAYS_2073 = {
     "baisakh": 31,
+    "jestha": 32,
+    "ashadh": 31,
+    "shrawan": 32,
     "bhadra": 31,
     "ashoj": 30,
     "kartik": 30,
@@ -35,9 +41,22 @@ MONTH_DAYS_2073 = {
 
 
 def parse_time(value: str) -> tuple[int, int]:
-    hour_text, minute_text = value.replace(" ", "").split(":")
+    normalized = value.replace(" ", "")
+    if ":" not in normalized:
+        fraction_of_day = float(normalized)
+        if not 0 <= fraction_of_day < 1:
+            raise ValueError(f"Invalid fractional-day time: {value!r}")
+        half_hour_steps = round(fraction_of_day * 48)
+        if half_hour_steps >= 48:
+            raise ValueError(f"Invalid fractional-day time: {value!r}")
+        hour, half_hour = divmod(half_hour_steps, 2)
+        return hour, half_hour * 30
+
+    hour_text, minute_text = normalized.split(":")
     hour = int(hour_text)
     minute = int(minute_text)
+    if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+        raise ValueError(f"Invalid hourly time: {value!r}")
     return hour, minute
 
 
@@ -49,7 +68,21 @@ def load_month(path: Path) -> tuple[pd.DataFrame, list[int]]:
         )
 
     month_start = pd.Timestamp(MONTH_STARTS_2073[month])
-    raw = pd.read_csv(path, skiprows=1)
+    source = pd.read_csv(path, header=None, dtype=str)
+    header_positions = [
+        position
+        for position, value in enumerate(source.iloc[:, 0])
+        if str(value).strip().lower() == "day"
+    ]
+    if not header_positions:
+        raise ValueError(f"Could not find a 'Day' header row in {path}.")
+    header_position = header_positions[0]
+    headers = source.iloc[header_position].tolist()
+    raw = source.iloc[header_position + 1 :].copy()
+    raw.columns = headers
+    raw = raw.loc[:, [column for column in raw.columns if pd.notna(column)]]
+    raw = raw.loc[:, [str(column).strip() for column in raw.columns]]
+    raw.columns = [str(column).strip() for column in raw.columns]
     raw = raw[pd.to_numeric(raw["Day"], errors="coerce").notna()].copy()
     raw["Day"] = pd.to_numeric(raw["Day"], errors="coerce").astype(int)
     valid_day = raw["Day"].between(1, MONTH_DAYS_2073[month])
@@ -67,7 +100,7 @@ def load_month(path: Path) -> tuple[pd.DataFrame, list[int]]:
             timestamp = pd.Timestamp(
                 date.year, date.month, date.day, hour, minute
             )
-            if column == "0:00":
+            if hour == 0 and minute == 0:
                 timestamp += pd.Timedelta(days=1)
 
             rows.append(

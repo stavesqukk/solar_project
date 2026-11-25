@@ -23,6 +23,46 @@ class DemandLoaderTests(unittest.TestCase):
             readings.index.min(), pd.Timestamp("2016-10-16 01:00")
         )
 
+    def test_month_loader_accepts_header_first_decimal_clock_values(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "SHRAWAN.csv"
+            path.write_text(
+                "Day,0.04,0.96,0.00\n"
+                "1.00,700,800,900\n",
+                encoding="utf-8",
+            )
+
+            readings, invalid_days = load_month(path)
+
+        self.assertEqual(invalid_days, [])
+        self.assertEqual(
+            readings.index.tolist(),
+            [
+                pd.Timestamp("2016-07-16 01:00"),
+                pd.Timestamp("2016-07-16 23:00"),
+                pd.Timestamp("2016-07-17 00:00"),
+            ],
+        )
+
+    def test_month_loader_uses_full_jestha_calendar_length(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "jestha.csv"
+            path.write_text(
+                "Day,1:00\n1,700\n32,800\n",
+                encoding="utf-8",
+            )
+
+            readings, invalid_days = load_month(path)
+
+        self.assertEqual(invalid_days, [])
+        self.assertEqual(
+            readings.index.tolist(),
+            [
+                pd.Timestamp("2016-05-14 01:00"),
+                pd.Timestamp("2016-06-14 01:00"),
+            ],
+        )
+
     def test_hourly_resampling_preserves_missing_calendar_hours(self):
         index = pd.DatetimeIndex(
             ["2016-04-13 00:00", "2016-04-13 03:00"], name="timestamp"

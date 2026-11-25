@@ -161,7 +161,7 @@ def plot_forecasts(
             overview_ax.text(
                 gap_start + (gap_end - gap_start) / 2,
                 0.5,
-                "NO SOURCE DATA\n(Jestha-Shrawan)\nnot zero demand",
+                "NO SOURCE DATA\nnot zero demand",
                 transform=overview_ax.get_xaxis_transform(),
                 ha="center",
                 va="center",

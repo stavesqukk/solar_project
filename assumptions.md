@@ -1,14 +1,21 @@
 # Assumptions
 
-- The NEA 2073 monthly files cover nine Nepali months in the repository.
+- The NEA 2073 monthly files now cover all twelve Nepali months in the repository.
 - BS month starts and lengths were cross-checked against two published 2073 BS
   calendar references: [UseMiti](https://usemiti.com/month-dates/2073) and
-  [Calendaw](https://www.calendaw.com/bs/2073). Baisakh 1 = 2016-04-13. The full
-  mapping is in `energy/load_demand.py`; the NEA file's own date semantics have
-  not been independently confirmed.
+  [Calendaw](https://www.calendaw.com/bs/2073). Baisakh 1 = 2016-04-13,
+  Jestha 1 = 2016-05-14, Asadh 1 = 2016-06-15, and Shrawan 1 = 2016-07-16.
+  The full mapping is in `energy/load_demand.py`; the NEA file's own date
+  semantics have not been independently confirmed.
 - The source CSVs include Asoj Day 31 and Poush Day 30, which exceed those
-  calendar months' lengths; these rows are excluded. Mangsir Day 30 and Chaitra
-  Day 31 are absent from the source files and remain missing in the hourly table.
+  calendar months' lengths; these rows are excluded.
+- Existing source files have an extra spreadsheet header row; the newly added
+  Jestha, Asadh, and Shrawan files do not. Shrawan encodes times as fractions of
+  a day rounded to the nearest half hour; the loader normalizes these to clock
+  times. The source data is missing Jestha Day 32, Mangsir Day 30, and Chaitra
+  Day 31, leaving 72 hourly slots missing; these remain missing, not zero-filled.
+  Month files should be checked for missing readings rather than assuming
+  calendar coverage guarantees every hourly observation exists.
 - The `0:00` reading is assigned to the end of the same BS day, represented as
   midnight at the start of the following Gregorian day. This time-column
   interpretation still needs confirmation from the NEA source documentation.
@@ -20,9 +27,9 @@
 - All timestamps are localized to `Asia/Kathmandu` (`UTC+05:45`) and resampled
   to whole hourly values. Missing calendar periods remain present as missing
   values rather than being dropped or filled.
-- Only nine of the twelve months are supplied. The missing Jestha, Asadh, and
-  Shrawan months create a long monsoon gap, so forecasts are only scored where
-  the required historical lag is actually available.
+- All twelve months are now included in the regenerated hourly series; the
+  former three-month gap is gone. Forecasts are still scored only where both
+  required historical lags are available.
 - The demand baseline uses a chronological 80/20 split of observed hourly values
   and a rolling one-step-ahead evaluation. The two seasonal-naive methods use
   the same hour 24 hours and 168 hours earlier, respectively.
@@ -55,7 +62,7 @@
 - "Actual" in the forecast output means the observed historical demand for that
   target timestamp; it is not today's live demand.
 - "Holdout" is the later chronological portion kept aside to evaluate forecasts.
-  The current split begins on 2017-02-18 at 05:00 Nepal time.
+  The current split begins on 2017-01-30 at 10:00 Nepal time.
 - The forecast comparison uses one calendar week of hourly points. The monthly
   profile plot averages demand separately for each hour of each available month.
 - Both plots keep the underlying measurements hourly. The monthly profile

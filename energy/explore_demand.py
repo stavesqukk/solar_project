@@ -6,6 +6,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from matplotlib.patches import Patch
 
 
 PROJECT_DRY_MONTHS = (12, 1, 2, 3, 4)
@@ -143,7 +144,11 @@ def plot_hourly_overview(features: pd.DataFrame, output_path: Path):
     ax.set_xlabel("Date (Asia/Kathmandu, Gregorian)")
     ax.set_ylabel("Demand (MW)")
     ax.grid(alpha=0.25)
-    ax.legend()
+    handles, labels = ax.get_legend_handles_labels()
+    if missing_positions.size:
+        handles.append(Patch(facecolor="lightgrey", alpha=0.7))
+        labels.append("Missing source hours (not zero demand)")
+    ax.legend(handles, labels)
     fig.tight_layout()
     fig.savefig(output_path, dpi=160)
     return fig
@@ -204,7 +209,7 @@ def plot_seasonal_profiles(profiles: pd.DataFrame, output_path: Path):
 
     ax.set_title(
         "Average hourly demand profile by season category\n"
-        "Calendar bins only; Jun-Jul absent, Aug partial in monsoon data"
+        "Calendar categories only; not a measure of hydrological conditions"
     )
     ax.set_xlabel("Hour of day (Asia/Kathmandu)")
     ax.set_ylabel("Mean demand (MW)")
