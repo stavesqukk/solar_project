@@ -115,7 +115,9 @@
   profiles for Scenarios A and B's 10% base are plotted in
   `report/hydro_demand_gap_profiles_2025_26.png`; monthly gap peaks and energy
   for all scenarios are compared in
-  `report/hydro_gap_monthly_scenarios_2025_26.png`.
+  `report/hydro_gap_monthly_scenarios_2025_26.png`. The results and their
+  interpretation are summarized in
+  `report/hydro_gap_analysis_2025_26.md`.
 - `energy/explore_demand.py` reads the cleaned hourly CSV, adds local calendar
   fields and past-demand features, and writes monthly, month-by-hour, and
   season-by-hour tables with plots. The seasonal labels describe calendar
