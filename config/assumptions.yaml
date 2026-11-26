@@ -1,0 +1,84 @@
+season_months:
+  dry:
+    - Mangsir
+    - Poush
+    - Magh
+    - Falgun
+    - Chaitra
+  shoulder:
+    - Baisakh
+    - Kartik
+  wet:
+    - Jestha
+    - Asadh
+    - Shrawan
+    - Bhadra
+    - Ashoj
+
+season_basis:
+  status: user_assumption
+  note: >-
+    These season groups are user-provided assumptions, based on the user's
+    report that NEA says domestic supply falls below demand from mid-December
+    to mid-April. This statement has not been independently verified here.
+
+fy_2025_26_dry_monthly_balance:
+  status: unverified_user_provided
+  source_note: >-
+    User-provided FY 2025/26 monthly balance values; unverified. Check against
+    the NEA annual report before using as measured facts.
+  units: GWh
+  months:
+    Mangsir:
+      domestic_generation_gwh: 1402
+      import_gwh: 1
+      export_gwh: 341
+      national_demand_gwh: 1065
+    Poush:
+      domestic_generation_gwh: 1125
+      import_gwh: 124
+      export_gwh: 40
+      national_demand_gwh: 1221
+    Magh:
+      domestic_generation_gwh: 864
+      import_gwh: 252
+      export_gwh: 1
+      national_demand_gwh: 1125
+    Falgun:
+      domestic_generation_gwh: 801
+      import_gwh: 273
+      export_gwh: 13
+      national_demand_gwh: 1067
+    Chaitra:
+      domestic_generation_gwh: 917
+      import_gwh: 264
+      export_gwh: 21
+      national_demand_gwh: 1163
+
+hydro_gap_scenarios:
+  status: user_assumptions
+  storage_shift_percentages: [0, 5, 10, 20, 30]
+  storage_shift_base_percent: 10
+  storage_shift_basis:
+    status: user_estimate_not_measured
+    note: >-
+      The 10 percent base is the user's rough estimate, not a measured Nepal
+      figure. The user's calculation uses a roughly 20 percent PRoR share and
+      concentrated evening output; lower PRoR shares or limited pondage imply
+      about 8-10 percent. User-reported PRoR estimates differ substantially.
+      20 and 30 percent are optimistic sensitivities; source claims are
+      unverified.
+    method: >-
+      Move this percentage of each day's total hydro energy from the other
+      19 hourly periods proportionally, then add it evenly to 18:00-22:00.
+      Preserve daily and monthly hydro energy.
+  hydro_share_sensitivity_percentage_points: 10
+  hydro_share_bounds_percent: [0, 100]
+  nea_import_expectation:
+    status: user_reported_unverified
+    comparison_months: [Magh, Falgun]
+    peak_hours_mw: [800, 900]
+    around_the_clock_mw: [450, 500]
+    note: >-
+      User-reported NEA import expectation for roughly mid-January to
+      mid-March; verify against a primary NEA source before treating as fact.

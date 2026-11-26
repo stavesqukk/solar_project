@@ -8,11 +8,22 @@ from matplotlib.patches import Patch
 import numpy as np
 import pandas as pd
 
+from energy.load_demand import load_season_months
+from energy.seasonal_analysis import add_bs_month
+
 
 DAILY_LAG_HOURS = 24
 WEEKLY_LAG_HOURS = 24 * 7
-DRY_SEASON_MONTHS = (12, 1, 2, 3, 4)
 EVENING_HOURS = (18, 19, 20, 21)
+MODEL_COLUMNS = {
+    "same_hour_yesterday": "naive_24h_forecast_mw",
+    "same_hour_last_week": "naive_168h_forecast_mw",
+}
+MODEL_LABELS = {
+    "same_hour_yesterday": "Same hour yesterday (24h)",
+    "same_hour_last_week": "Same hour last week (168h)",
+}
+MONTH_DISPLAY_ALIASES = {"paush": "Poush", "ashadh": "Asadh"}
 
 
 def prepare_hourly_demand(demand: pd.Series) -> pd.Series:
@@ -79,25 +90,32 @@ def calculate_metrics(actual: pd.Series, predicted: pd.Series) -> dict[str, floa
     }
 
 
-def build_metrics(forecasts: pd.DataFrame) -> pd.DataFrame:
-    periods = {
-        "all_holdout": pd.Series(True, index=forecasts.index),
-        "dry_season": pd.Series(
-            forecasts.index.month.isin(DRY_SEASON_MONTHS), index=forecasts.index
-        ),
-        "evening_18_21": pd.Series(
-            forecasts.index.hour.isin(EVENING_HOURS), index=forecasts.index
-        ),
-    }
-    model_columns = {
-        "same_hour_yesterday": "naive_24h_forecast_mw",
-        "same_hour_last_week": "naive_168h_forecast_mw",
-    }
+def _forecast_bs_months(
+    index: pd.Index,
+) -> tuple[pd.DatetimeIndex, pd.Series]:
+    if not isinstance(index, pd.DatetimeIndex):
+        raise TypeError("Forecasts must use a DatetimeIndex.")
+    if index.tz is None:
+        raise ValueError("Forecast timestamps must include the local timezone.")
+    bs_months = add_bs_month(pd.DataFrame(index=index))["bs_month"]
+    return index, bs_months
 
+
+def build_metrics(forecasts: pd.DataFrame) -> pd.DataFrame:
+    forecast_index, bs_months = _forecast_bs_months(forecasts.index)
+    season_by_month = load_season_months()
+    dry_season = bs_months.map(season_by_month).eq("dry")
+    periods = {
+        "all_holdout": pd.Series(True, index=forecast_index),
+        "dry_season": pd.Series(dry_season.to_numpy(), index=forecast_index),
+        "evening_18_21": pd.Series(
+            forecast_index.hour.isin(EVENING_HOURS), index=forecast_index
+        ),
+    }
     rows = []
     for period, mask in periods.items():
         subset = forecasts.loc[mask]
-        for model, column in model_columns.items():
+        for model, column in MODEL_COLUMNS.items():
             rows.append(
                 {
                     "period": period,
@@ -110,18 +128,121 @@ def build_metrics(forecasts: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
+def build_error_breakdown(forecasts: pd.DataFrame) -> pd.DataFrame:
+    forecast_index, bs_months = _forecast_bs_months(forecasts.index)
+    required = {"actual_demand_mw", *MODEL_COLUMNS.values()}
+    if not required.issubset(forecasts.columns):
+        raise ValueError(f"Forecasts must contain columns {sorted(required)}.")
+
+    grouped = forecasts.copy()
+    grouped["bs_month"] = bs_months.to_numpy()
+    grouped["hour_of_day"] = forecast_index.hour
+    rows = []
+
+    def append_metrics(period_type: str, period: str | int, sample: pd.DataFrame):
+        for model, column in MODEL_COLUMNS.items():
+            valid = sample[["actual_demand_mw", column]].dropna()
+            if valid.empty:
+                continue
+            errors = valid[column] - valid["actual_demand_mw"]
+            rows.append(
+                {
+                    "period_type": period_type,
+                    "period": period,
+                    "model": model,
+                    "n": len(valid),
+                    "mae_mw": float(errors.abs().mean()),
+                    "rmse_mw": float(np.sqrt(np.square(errors).mean())),
+                    "mean_error_mw": float(errors.mean()),
+                }
+            )
+
+    for month, sample in grouped.groupby("bs_month", sort=False):
+        if not isinstance(month, str):
+            raise TypeError("BS month groups must have text labels.")
+        append_metrics("bs_month", month, sample)
+    for hour in range(24):
+        sample = grouped.loc[grouped["hour_of_day"] == hour]
+        append_metrics("hour_of_day", hour, sample)
+    return pd.DataFrame(rows)
+
+
+def plot_forecast_error_analysis(
+    error_breakdown: pd.DataFrame, output_path: Path
+) -> None:
+    monthly = error_breakdown.loc[
+        error_breakdown["period_type"] == "bs_month"
+    ]
+    hourly = error_breakdown.loc[
+        error_breakdown["period_type"] == "hour_of_day"
+    ]
+    if monthly.empty or hourly.empty:
+        raise ValueError("Monthly and hourly error groups are required for the plot.")
+
+    month_order = monthly["period"].drop_duplicates().tolist()
+    monthly_mae = monthly.pivot(
+        index="period", columns="model", values="mae_mw"
+    ).reindex(index=month_order, columns=list(MODEL_COLUMNS))
+    monthly_mae = monthly_mae.rename(columns=MODEL_LABELS)
+    monthly_mae.index = [
+        MONTH_DISPLAY_ALIASES.get(month, month.title())
+        for month in monthly_mae.index
+    ]
+
+    fig, (month_ax, hour_ax) = plt.subplots(
+        2, 1, figsize=(12, 9), gridspec_kw={"height_ratios": [1, 1.2]}
+    )
+    monthly_mae.plot(kind="bar", ax=month_ax, color=["tab:blue", "tab:orange"])
+    month_ax.set_title("Mean absolute error by Nepali BS month")
+    month_ax.set_ylabel("MAE (MW)")
+    month_ax.set_xlabel("Holdout BS month")
+    month_ax.tick_params(axis="x", rotation=0)
+    month_ax.grid(axis="y", alpha=0.25)
+    month_ax.legend(title="Baseline")
+
+    for model, sample in hourly.groupby("model", sort=False):
+        if not isinstance(model, str) or model not in MODEL_LABELS:
+            raise ValueError(f"Unknown forecast model in error breakdown: {model!r}.")
+        sample = sample.sort_values("period")
+        hour_ax.plot(
+            sample["period"],
+            sample["mean_error_mw"],
+            marker="o",
+            linewidth=1.5,
+            label=MODEL_LABELS[model],
+        )
+    hour_ax.axhline(0, color="black", linewidth=0.8)
+    hour_ax.set_title("Mean forecast bias by hour of day")
+    hour_ax.set_ylabel("Forecast - actual (MW)")
+    hour_ax.set_xlabel("Hour of day (Asia/Kathmandu)")
+    hour_ax.set_xticks(range(24), [f"{hour:02d}:00" for hour in range(24)], rotation=45)
+    hour_ax.grid(alpha=0.25)
+    hour_ax.legend(title="Positive = overforecast")
+
+    fig.suptitle("Historical holdout error analysis; not a current forecast")
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
 def plot_forecasts(
     demand: pd.Series,
     forecasts: pd.DataFrame,
     split_at: pd.Timestamp,
     output_path: Path,
 ) -> None:
+    forecast_index = forecasts.index
+    if not isinstance(forecast_index, pd.DatetimeIndex):
+        raise TypeError("Forecasts must use a DatetimeIndex.")
+
     hourly_window = None
     for _, segment in forecasts.groupby(
-        forecasts.index.to_series().diff().ne(pd.Timedelta(hours=1)).cumsum()
+        forecast_index.to_series().diff().ne(pd.Timedelta(hours=1)).cumsum()
     ):
         if len(segment) >= WEEKLY_LAG_HOURS:
-            midnight_starts = np.flatnonzero(segment.index.hour == 0)
+            segment_index = pd.DatetimeIndex(segment.index)
+            midnight_starts = np.flatnonzero(segment_index.hour == 0)
             for start in midnight_starts:
                 if start + WEEKLY_LAG_HOURS <= len(segment):
                     hourly_window = segment.iloc[start : start + WEEKLY_LAG_HOURS]
@@ -265,12 +386,17 @@ def main() -> None:
     forecast_path = Path("energy/demand_forecast.csv")
     metrics_path = Path("report/demand_baseline_metrics.csv")
     plot_path = Path("report/demand_baseline_comparison.png")
+    error_breakdown_path = Path("report/demand_forecast_error_breakdown.csv")
+    error_plot_path = Path("report/demand_forecast_error_analysis.png")
     forecast_path.parent.mkdir(parents=True, exist_ok=True)
     metrics_path.parent.mkdir(parents=True, exist_ok=True)
     forecasts.to_csv(forecast_path)
     metrics.to_csv(metrics_path, index=False)
+    error_breakdown = build_error_breakdown(forecasts)
+    error_breakdown.to_csv(error_breakdown_path, index=False)
     hourly_demand = prepare_hourly_demand(demand)
     plot_forecasts(hourly_demand, forecasts, split_at, plot_path)
+    plot_forecast_error_analysis(error_breakdown, error_plot_path)
 
     print("Chronological holdout starts:", split_at)
     print("Scored holdout hours:", len(forecasts))
@@ -278,6 +404,8 @@ def main() -> None:
     print("Saved:", forecast_path)
     print("Saved:", metrics_path)
     print("Saved:", plot_path)
+    print("Saved:", error_breakdown_path)
+    print("Saved:", error_plot_path)
 
 
 if __name__ == "__main__":

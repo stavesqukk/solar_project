@@ -4,7 +4,13 @@ from tempfile import TemporaryDirectory
 
 import pandas as pd
 
-from energy.load_demand import build_hourly, clean_readings, load_month
+from energy.load_demand import (
+    add_season_column,
+    build_hourly,
+    clean_readings,
+    load_month,
+    load_season_months,
+)
 
 
 class DemandLoaderTests(unittest.TestCase):
@@ -97,6 +103,49 @@ class DemandLoaderTests(unittest.TestCase):
 
         self.assertTrue(cleaned["flagged"].iloc[1])
         self.assertTrue(pd.isna(cleaned["demand_clean_mw"].iloc[1]))
+
+    def test_config_defines_each_bs_month_in_exactly_one_season(self):
+        season_by_month = load_season_months()
+
+        self.assertEqual(len(season_by_month), 12)
+        self.assertEqual(
+            {month for month, season in season_by_month.items() if season == "dry"},
+            {"mangsir", "paush", "magh", "falgun", "chaitra"},
+        )
+        self.assertEqual(
+            {
+                month
+                for month, season in season_by_month.items()
+                if season == "shoulder"
+            },
+            {"baisakh", "kartik"},
+        )
+        self.assertEqual(
+            {month for month, season in season_by_month.items() if season == "wet"},
+            {"jestha", "ashadh", "shrawan", "bhadra", "ashoj"},
+        )
+
+    def test_season_labels_follow_bs_month_at_midnight_boundaries(self):
+        index = pd.DatetimeIndex(
+            [
+                "2016-05-13 23:00",
+                "2016-05-14 00:00",
+                "2016-11-15 23:00",
+                "2016-11-16 00:00",
+                "2017-04-13 23:00",
+                "2017-04-14 00:00",
+            ],
+            tz="Asia/Kathmandu",
+            name="timestamp",
+        )
+        hourly = pd.DataFrame({"demand_mw": range(len(index))}, index=index)
+
+        result = add_season_column(hourly, load_season_months())
+
+        self.assertEqual(
+            result["season"].tolist(),
+            ["shoulder", "wet", "shoulder", "dry", "dry", "shoulder"],
+        )
 
 
 if __name__ == "__main__":

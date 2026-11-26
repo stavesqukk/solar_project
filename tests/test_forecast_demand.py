@@ -1,9 +1,17 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
 
-from energy.forecast_demand import calculate_metrics, create_forecasts
+from energy.forecast_demand import (
+    build_metrics,
+    build_error_breakdown,
+    calculate_metrics,
+    create_forecasts,
+    plot_forecast_error_analysis,
+)
 
 
 class DemandForecastTests(unittest.TestCase):
@@ -50,6 +58,73 @@ class DemandForecastTests(unittest.TestCase):
         self.assertEqual(metrics["mae_mw"], 15.0)
         self.assertAlmostEqual(metrics["rmse_mw"], np.sqrt(250))
         self.assertAlmostEqual(metrics["mape_pct"], 10.0)
+
+    def test_dry_season_metrics_follow_configured_bs_months(self):
+        index = pd.DatetimeIndex(
+            [
+                "2016-04-13 18:00",
+                "2016-05-14 18:00",
+                "2016-11-16 18:00",
+            ],
+            tz="Asia/Kathmandu",
+            name="timestamp",
+        )
+        forecasts = pd.DataFrame(
+            {
+                "actual_demand_mw": [1000.0, 1000.0, 1000.0],
+                "naive_24h_forecast_mw": [900.0, 900.0, 900.0],
+                "naive_168h_forecast_mw": [800.0, 800.0, 800.0],
+            },
+            index=index,
+        )
+
+        metrics = build_metrics(forecasts)
+        dry_metrics = metrics.loc[metrics["period"] == "dry_season"]
+
+        self.assertEqual(dry_metrics["n"].tolist(), [1, 1])
+
+    def test_error_breakdown_summarizes_month_hour_and_bias_and_plots(self):
+        index = pd.DatetimeIndex(
+            [
+                "2016-04-13 18:00",
+                "2016-05-14 18:00",
+                "2016-11-16 19:00",
+            ],
+            tz="Asia/Kathmandu",
+            name="timestamp",
+        )
+        forecasts = pd.DataFrame(
+            {
+                "actual_demand_mw": [1000.0, 1000.0, 1000.0],
+                "naive_24h_forecast_mw": [900.0, 1100.0, 1000.0],
+                "naive_168h_forecast_mw": [800.0, 900.0, 1000.0],
+            },
+            index=index,
+        )
+
+        breakdown = build_error_breakdown(forecasts)
+        baisakh_yesterday = breakdown.loc[
+            (breakdown["period_type"] == "bs_month")
+            & (breakdown["period"] == "baisakh")
+            & (breakdown["model"] == "same_hour_yesterday")
+        ].iloc[0]
+        hour_18_yesterday = breakdown.loc[
+            (breakdown["period_type"] == "hour_of_day")
+            & (breakdown["period"] == 18)
+            & (breakdown["model"] == "same_hour_yesterday")
+        ].iloc[0]
+
+        self.assertEqual(baisakh_yesterday["n"], 1)
+        self.assertEqual(baisakh_yesterday["mean_error_mw"], -100.0)
+        self.assertEqual(hour_18_yesterday["n"], 2)
+        self.assertEqual(hour_18_yesterday["mae_mw"], 100.0)
+        self.assertEqual(hour_18_yesterday["mean_error_mw"], 0.0)
+
+        with TemporaryDirectory() as directory:
+            output_path = Path(directory) / "forecast_errors.png"
+            plot_forecast_error_analysis(breakdown, output_path)
+            self.assertTrue(output_path.is_file())
+            self.assertGreater(output_path.stat().st_size, 0)
 
 
 if __name__ == "__main__":

@@ -7,6 +7,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import yaml
 
 
 MONTH_STARTS_2073 = {
@@ -38,6 +39,13 @@ MONTH_DAYS_2073 = {
     "falgun": 30,
     "chaitra": 31,
 }
+
+BS_MONTH_ALIASES = {
+    "poush": "paush",
+    "asadh": "ashadh",
+}
+
+SEASON_CONFIG_PATH = Path(__file__).resolve().parents[1] / "config" / "assumptions.yaml"
 
 
 def parse_time(value: str) -> tuple[int, int]:
@@ -144,6 +152,87 @@ def build_hourly(readings: pd.DataFrame) -> pd.DataFrame:
     return result
 
 
+def load_season_months(
+    path: Path = SEASON_CONFIG_PATH,
+) -> dict[str, str]:
+    with path.open(encoding="utf-8") as file:
+        config = yaml.safe_load(file)
+
+    raw_seasons = config.get("season_months") if isinstance(config, dict) else None
+    expected_seasons = {"dry", "shoulder", "wet"}
+    if not isinstance(raw_seasons, dict) or set(raw_seasons) != expected_seasons:
+        raise ValueError(
+            f"{path} must define exactly these season groups: "
+            f"{sorted(expected_seasons)}."
+        )
+
+    # Assumption: these user-defined groups are calendar labels, not measured
+    # hydrological conditions; see ASSUMPTIONS.md and this YAML's season_basis.
+    season_by_month: dict[str, str] = {}
+    for season, months in raw_seasons.items():
+        if not isinstance(months, list):
+            raise ValueError(f"Season '{season}' in {path} must contain a list.")
+        for month in months:
+            if not isinstance(month, str):
+                raise ValueError(f"Season '{season}' contains a non-text month.")
+            normalized_month = month.strip().lower()
+            normalized_month = BS_MONTH_ALIASES.get(
+                normalized_month, normalized_month
+            )
+            if normalized_month not in MONTH_STARTS_2073:
+                raise ValueError(f"Unknown BS month '{month}' in {path}.")
+            if normalized_month in season_by_month:
+                raise ValueError(
+                    f"BS month '{month}' is assigned to more than one season."
+                )
+            season_by_month[normalized_month] = season
+
+    unassigned_months = set(MONTH_STARTS_2073) - set(season_by_month)
+    if unassigned_months:
+        raise ValueError(
+            f"These BS months have no season assignment: "
+            f"{sorted(unassigned_months)}."
+        )
+    return season_by_month
+
+
+def add_season_column(
+    hourly: pd.DataFrame, season_by_month: dict[str, str]
+) -> pd.DataFrame:
+    if not isinstance(hourly.index, pd.DatetimeIndex):
+        raise TypeError("Hourly demand must have a DatetimeIndex.")
+    if hourly.index.tz is None:
+        raise ValueError("Hourly demand timestamps must include a timezone.")
+
+    month_boundaries = sorted(
+        (pd.Timestamp(start), month)
+        for month, start in MONTH_STARTS_2073.items()
+    )
+    next_baisakh = (
+        pd.Timestamp(MONTH_STARTS_2073["chaitra"])
+        + pd.Timedelta(days=MONTH_DAYS_2073["chaitra"])
+    )
+    month_boundaries.append((next_baisakh, "baisakh"))
+
+    local_timestamps = hourly.index.tz_convert("Asia/Kathmandu").tz_localize(None)
+    seasons = pd.Series(index=hourly.index, dtype="object", name="season")
+    for position, (start, month) in enumerate(month_boundaries):
+        start = start.normalize()
+        if position + 1 < len(month_boundaries):
+            end = month_boundaries[position + 1][0].normalize()
+            matches = (local_timestamps >= start) & (local_timestamps < end)
+        else:
+            matches = local_timestamps >= start
+        seasons.loc[matches] = season_by_month[month]
+
+    if seasons.isna().any():
+        raise ValueError("Could not assign a season to every hourly timestamp.")
+
+    result = hourly.copy()
+    result["season"] = seasons
+    return result
+
+
 def plot_week(hourly: pd.DataFrame, output_path: Path) -> None:
     week = hourly.iloc[: 7 * 24]
     if week.empty:
@@ -198,6 +287,7 @@ def main() -> None:
     hourly.index = hourly.index.tz_localize(
         "Asia/Kathmandu", nonexistent="shift_forward", ambiguous="NaT"
     )
+    hourly = add_season_column(hourly, load_season_months())
 
     readings.index = readings.index.tz_localize(
         "Asia/Kathmandu", nonexistent="shift_forward", ambiguous="NaT"
@@ -220,6 +310,8 @@ def main() -> None:
     print("Hourly rows:", len(hourly))
     print("Flagged readings:", int(readings["flagged"].sum()))
     print("Missing hourly periods:", int(hourly["demand_mw"].isna().sum()))
+    print("Hourly rows by season:")
+    print(hourly["season"].value_counts().sort_index().to_string())
     print("Date range:", hourly.index.min(), "to", hourly.index.max())
     print("Saved:", data_folder / "demand_hourly.csv")
     print("Saved:", data_folder / "demand_all_readings.csv")
