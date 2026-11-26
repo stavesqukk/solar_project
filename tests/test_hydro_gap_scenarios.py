@@ -1,4 +1,6 @@
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 import pandas as pd
@@ -6,6 +8,8 @@ import pandas as pd
 from energy.hydro_gap_scenarios import (
     build_hydro_gap_table,
     load_scenario_config,
+    plot_hydro_demand_gap_profiles,
+    plot_monthly_gap_scenarios,
     summarize_hydro_gaps,
 )
 from energy.scale_recent_demand import load_monthly_balance
@@ -124,6 +128,15 @@ class HydroGapScenarioTests(unittest.TestCase):
             .str.contains("not identical to actual imports")
             .all()
         )
+        with TemporaryDirectory() as directory:
+            profile_path = Path(directory) / "demand_supply_gap.png"
+            scenario_path = Path(directory) / "monthly_gap_scenarios.png"
+            plot_hydro_demand_gap_profiles(gap_table, profile_path)
+            plot_monthly_gap_scenarios(summary, scenario_path)
+            self.assertTrue(profile_path.is_file())
+            self.assertTrue(scenario_path.is_file())
+            self.assertGreater(profile_path.stat().st_size, 0)
+            self.assertGreater(scenario_path.stat().st_size, 0)
 
 
 if __name__ == "__main__":

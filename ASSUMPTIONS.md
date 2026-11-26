@@ -111,7 +111,11 @@
   `.\.venv\Scripts\python.exe -m energy.hydro_gap_scenarios`. Hourly scenario
   data is saved to `data/dry_season_hydro_gap_2025_26.csv`; monthly, dry-season,
   and Magh-Falgun metrics are saved to
-  `report/hydro_gap_scenario_summary_2025_26.csv`.
+  `report/hydro_gap_scenario_summary_2025_26.csv`. The demand/supply/gap hourly
+  profiles for Scenarios A and B's 10% base are plotted in
+  `report/hydro_demand_gap_profiles_2025_26.png`; monthly gap peaks and energy
+  for all scenarios are compared in
+  `report/hydro_gap_monthly_scenarios_2025_26.png`.
 - `energy/explore_demand.py` reads the cleaned hourly CSV, adds local calendar
   fields and past-demand features, and writes monthly, month-by-hour, and
   season-by-hour tables with plots. The seasonal labels describe calendar

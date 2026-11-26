@@ -4,6 +4,7 @@ import argparse
 import math
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import yaml
@@ -25,6 +26,155 @@ SCENARIO_SECTION = "hydro_gap_scenarios"
 STORAGE_HOURS = frozenset(range(18, 23))
 GAP_WINDOW_HOURS = frozenset(range(17, 23))
 PEAK_COMPARISON_HOURS = frozenset(range(18, 23))
+PLOT_SCENARIOS = {
+    "A_flat_base": "A - flat base",
+    "B_storage_10pct_base": "B - 10% storage base",
+}
+SCENARIO_LABELS = {
+    "A_flat_base": "A flat",
+    "B_storage_0pct": "B 0%",
+    "B_storage_5pct": "B 5%",
+    "B_storage_10pct_base": "B 10% base",
+    "B_storage_20pct_optimistic": "B 20% opt.",
+    "B_storage_30pct_optimistic": "B 30% opt.",
+    "C_hydro_share_minus_10pp": "C -10 pp",
+    "C_hydro_share_plus_10pp": "C +10 pp",
+}
+
+
+def plot_hydro_demand_gap_profiles(
+    gap_table: pd.DataFrame, output_path: Path
+) -> None:
+    missing_scenarios = set(PLOT_SCENARIOS) - set(gap_table["scenario"].unique())
+    if missing_scenarios:
+        raise ValueError(
+            f"Hourly gap table is missing plot scenarios: {sorted(missing_scenarios)}."
+        )
+
+    fig, axes = plt.subplots(
+        2,
+        2,
+        figsize=(15, 9),
+        sharex=True,
+        gridspec_kw={"height_ratios": [2, 1]},
+    )
+    hours = range(24)
+    for column, (scenario, title) in enumerate(PLOT_SCENARIOS.items()):
+        scenario_data = gap_table.loc[gap_table["scenario"] == scenario].copy()
+        scenario_data["hour_of_day"] = scenario_data["timestamp"].dt.hour
+        profile = (
+            scenario_data.groupby("hour_of_day")[
+                ["demand_scaled_mw", "hydro_supply_mw", "gap_mw"]
+            ]
+            .mean()
+            .reindex(hours)
+        )
+        if profile["demand_scaled_mw"].isna().all():
+            raise ValueError(f"No observed demand is available for {scenario}.")
+
+        axes[0, column].plot(
+            hours,
+            profile["demand_scaled_mw"],
+            color="black",
+            linewidth=1.8,
+            label="Scaled demand (2073 hourly shape)",
+        )
+        axes[0, column].plot(
+            hours,
+            profile["hydro_supply_mw"],
+            color="tab:blue",
+            linewidth=1.8,
+            label="Modeled hydro supply",
+        )
+        axes[0, column].set_title(title)
+        axes[0, column].set_ylabel("Mean power (MW)")
+        axes[0, column].grid(alpha=0.25)
+        axes[0, column].legend(fontsize=8)
+
+        axes[1, column].plot(
+            hours,
+            profile["gap_mw"],
+            color="tab:red",
+            linewidth=1.8,
+            label="Mean observed demand-minus-hydro gap",
+        )
+        axes[1, column].fill_between(
+            hours,
+            profile["gap_mw"].to_numpy(dtype=float),
+            color="tab:red",
+            alpha=0.15,
+        )
+        axes[1, column].set_ylabel("Mean gap (MW)")
+        axes[1, column].set_xlabel("Hour of day (Asia/Kathmandu)")
+        axes[1, column].set_xticks(
+            range(24), [f"{hour:02d}:00" for hour in range(24)], rotation=45
+        )
+        axes[1, column].grid(alpha=0.25)
+
+    fig.suptitle(
+        "Dry-season demand, modeled hydro supply, and gap by hour\n"
+        "Scaled historical shape; not measured FY 2025/26 hourly data"
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
+
+
+def plot_monthly_gap_scenarios(
+    summary: pd.DataFrame, output_path: Path
+) -> None:
+    monthly = summary.loc[summary["period_type"] == "month"]
+    month_order = monthly["period"].drop_duplicates().tolist()
+    available_scenarios = set(monthly["scenario"])
+    scenario_order = [
+        scenario
+        for scenario in SCENARIO_LABELS
+        if scenario in available_scenarios
+    ]
+    if not month_order or len(scenario_order) != len(SCENARIO_LABELS):
+        raise ValueError("Monthly summary must include all dry months and scenarios.")
+
+    metrics = (
+        ("gap_peak_mw", "Maximum hourly gap (MW)", "YlOrRd", "{:.0f}"),
+        ("gap_peak_18_22_mw", "Maximum 18:00-22:00 gap (MW)", "YlOrRd", "{:.0f}"),
+        ("gap_energy_gwh", "Observed gap energy (GWh)", "PuBu", "{:.1f}"),
+    )
+    scenario_labels = [SCENARIO_LABELS[scenario] for scenario in scenario_order]
+    fig, axes = plt.subplots(3, 1, figsize=(15, 12), sharex=True)
+    for axis, (metric, title, color_map, number_format) in zip(
+        axes, metrics, strict=True
+    ):
+        matrix = monthly.pivot(
+            index="period", columns="scenario", values=metric
+        ).reindex(index=month_order, columns=scenario_order)
+        values = matrix.to_numpy(dtype=float)
+        image = axis.imshow(values, aspect="auto", interpolation="nearest", cmap=color_map)
+        axis.set_title(title)
+        axis.set_yticks(range(len(month_order)), month_order)
+        axis.set_xticks(range(len(scenario_order)), scenario_labels, rotation=35, ha="right")
+        for row in range(len(month_order)):
+            for column in range(len(scenario_order)):
+                axis.text(
+                    column,
+                    row,
+                    number_format.format(values[row, column]),
+                    ha="center",
+                    va="center",
+                    fontsize=8,
+                )
+        colorbar = fig.colorbar(image, ax=axis, pad=0.015)
+        colorbar.set_label(title)
+
+    axes[-1].set_xlabel("Hydro supply scenario")
+    fig.suptitle(
+        "Monthly demand-minus-hydro gap by scenario\n"
+        "Computed from observed scaled demand hours; missing hours omitted"
+    )
+    fig.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=160)
+    plt.close(fig)
 
 
 def load_scenario_config(path: Path = CONFIG_PATH) -> dict:
@@ -449,6 +599,11 @@ def main() -> None:
     gap_table.to_csv(args.gap_output, index=False)
     summary.to_csv(args.summary_output, index=False)
 
+    profile_plot_path = Path("report/hydro_demand_gap_profiles_2025_26.png")
+    scenario_plot_path = Path("report/hydro_gap_monthly_scenarios_2025_26.png")
+    plot_hydro_demand_gap_profiles(gap_table, profile_plot_path)
+    plot_monthly_gap_scenarios(summary, scenario_plot_path)
+
     print("Gap comparison for Magh-Falgun:")
     comparison = summary.loc[summary["period_type"] == "comparison_period"]
     print(
@@ -468,6 +623,8 @@ def main() -> None:
     print("\nSaved:")
     print(args.gap_output)
     print(args.summary_output)
+    print(profile_plot_path)
+    print(scenario_plot_path)
 
 
 if __name__ == "__main__":
